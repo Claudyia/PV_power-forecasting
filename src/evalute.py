@@ -1,0 +1,1 @@
+## carica modello addestrato e calcola metriche di valutazione sui dati di test, salva dentro results/

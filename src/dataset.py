@@ -1,0 +1,1 @@
+#contine i classi pytorch dataset, trasforma i dati in tensori, supporta batch ecc.
