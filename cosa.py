@@ -84,6 +84,8 @@ def main():
     # 2) Interpola SOLO gli outlier singoli
     df_clean = interpolate_point_by_point(df, mask)
 
+    df_clean= df_clean.drop(["weather_cloudy","Production_KWh_roll_max","Production_KWh_roll_min"], axis=1, errors='ignore')
+
     # 3) Salva il nuovo file (pulito)
     df_clean.to_excel(OUTPUT_INTERPOLATED, index=False)
     print(f"\nFile pulito salvato in: {OUTPUT_INTERPOLATED}")

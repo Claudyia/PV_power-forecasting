@@ -1,5 +1,6 @@
 from pathlib import Path
 import pandas as pd
+import numpy as np
 
 
 # ============================================================
@@ -174,14 +175,74 @@ def drop_unused_columns(wx):
 def add_time_features(df, date_col):
     dt = pd.to_datetime(df[date_col], errors="coerce")
 
-    df["year"]        = dt.dt.year
     df["month"]       = dt.dt.month
     df["day"]         = dt.dt.day
     df["hour"]        = dt.dt.hour
     df["day_of_week"] = dt.dt.dayofweek
     df["is_weekend"]  = df["day_of_week"].isin([5, 6]).astype(int)
     df["day_of_year"] = dt.dt.dayofyear
+    df["hour_sin"]   = np.sin(2 * np.pi * df["hour"] / 24)
+    df["hour_cos"]   = np.cos(2 * np.pi * df["hour"] / 24)
+    df["doy_sin"]   = np.sin(2 * np.pi * df["day_of_year"] / 366)
+    df["doy_cos"]   = np.cos(2 * np.pi * df["day_of_year"] / 366)   
 
+    return df
+
+
+def add_lag_features(df, columns, lags): 
+    """" funzione per aggiungere feature di lag  per la potenza per 1h, 12 h, 24h ecc """
+    df = df.copy()
+    for col in columns:
+        if col not in df.columns:
+            continue
+        for lag in lags:
+            df[f"{col}_lag_{lag}h"] = df[col].shift(lag)
+    return df 
+
+
+def add_rolling_features(df, columns, windows):
+    """	roll_mean_3h
+	•	roll_max_3h
+	•	roll_min_3h
+	•	roll_std_6h 
+	•	roll_mean_24h """
+    df = df.copy()
+    for col in columns:
+        if col not in df.columns:
+            continue
+        for window in windows:
+            df[f"{col}_roll_mean_{window}h"] = df[col].rolling(window=window).mean()
+            df[f"{col}_roll_max_{window}h"]  = df[col].rolling(window=window).max()
+            df[f"{col}_roll_min_{window}h"]  = df[col].rolling(window=window).min()
+            df[f"{col}_roll_std_{window}h"]  = df[col].rolling(window=window).std()
+    return df
+
+
+def add_weather_combinations(df):
+    """ ✔ Combinazioni fisiche utili
+	•	Effettiva radiazione utile:
+        GHI * (1 - CloudCover)
+            •	Rapporto fisico:
+        GHI / Temperature
+            •	Aria secca/umida:
+        RH * Temperature
+            •	Wind chill sulle celle:
+        WindSpeed * Temperature"""
+    df = df.copy()
+    ghi_col = None
+    for candidate in ["GHI", "Ghi", "ghi"]:
+        if candidate in df.columns:
+            ghi_col = candidate
+            break
+
+    if ghi_col and "weather_cloudy" in df.columns:
+        df["effective_radiation"] = df[ghi_col] * (1 - df["weather_cloudy"])
+    if ghi_col and "temperature" in df.columns:
+        df["ghi_temp_ratio"] = df[ghi_col] / df["temperature"].replace(0, pd.NA)
+    if "humidity" in df.columns and "temperature" in df.columns:
+        df["rh_temp_product"] = df["humidity"] * df["temperature"]
+    if "wind_speed" in df.columns and "temperature" in df.columns:
+        df["wind_chill_effect"] = df["wind_speed"] * df["temperature"]
     return df
 
 
@@ -208,6 +269,10 @@ def nuovo_dataset(pv, wx):
     df["temperature"] = wx["temperature"]
     df["humidity"] = wx["humidity"]
 
+    for extra_col in ["Ghi", "Dhi", "Dni", "wind_speed", "clouds_all"]:
+        if extra_col in wx.columns:
+            df[extra_col] = wx[extra_col]
+
     # One-hot
     df["weather_cloudy"]         = wx["weather_cloudy"]
     df["weather_partly_cloudy"]  = wx["weather_partly_cloudy"]
@@ -216,13 +281,10 @@ def nuovo_dataset(pv, wx):
     df["weather_other"]          = wx["weather_other"]
 
     # Time features da PV
-    df["year"]        = pv["year"]
-    df["month"]       = pv["month"]
-    df["day"]         = pv["day"]
-    df["hour"]        = pv["hour"]
-    df["day_of_week"] = pv["day_of_week"]
-    df["is_weekend"]  = pv["is_weekend"]
-    df["day_of_year"] = pv["day_of_year"]
+    df["hour_sin"]   = pv["hour_sin"]
+    df["hour_cos"]   = pv["hour_cos"]
+    df["doy_sin"]   = pv["doy_sin"]
+    df["doy_cos"]   = pv["doy_cos"]
 
     return df
 
@@ -258,6 +320,18 @@ def build_merged_dataset():
 
     # ⭐ Poi crea il dataset
     merged = nuovo_dataset(pv, wx)
+
+    lag_columns = ["Production_KWh"]
+    lag_hours = [1, 12, 24]
+    rolling_columns = ["Production_KWh"]
+    rolling_windows = [3, 6, 24]
+
+    merged = add_lag_features(merged, columns=lag_columns, lags=lag_hours)
+    merged = add_rolling_features(merged, columns=rolling_columns, windows=rolling_windows)
+    merged = add_weather_combinations(merged)
+
+    history = max(max(lag_hours), max(rolling_windows))
+    merged = merged.iloc[history:].reset_index(drop=True)
 
     # Formatta pv_date per Excel
     merged = format_pv_date_for_display(merged, date_col="pv_date")
